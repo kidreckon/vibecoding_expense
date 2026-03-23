@@ -23,7 +23,9 @@ DEFAULT_CATEGORIES = [
 
 def get_db():
     conninfo = DATABASE_URL
-    if conninfo and "sslmode" not in conninfo:
+    if not conninfo:
+        raise RuntimeError("DATABASE_URL environment variable is not set")
+    if "sslmode" not in conninfo:
         sep = "&" if "?" in conninfo else "?"
         conninfo += sep + "sslmode=require"
     conn = psycopg.connect(conninfo)
@@ -69,8 +71,11 @@ def init_db():
 
 try:
     init_db()
+    print("Database initialized successfully")
 except Exception as e:
-    print(f"Warning: init_db failed: {e}")
+    print(f"ERROR: init_db failed: {e}")
+    import traceback
+    traceback.print_exc()
 
 
 # --- Auth Utilities ---
