@@ -34,7 +34,28 @@
             position: sticky;
             top: 0;
             z-index: 10;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 14px;
+            font-weight: 400;
+        }
+        .header-right .username { opacity: 0.9; }
+        .logout-btn {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .logout-btn:active { background: rgba(255,255,255,0.3); }
 
         /* Tab bar */
         .tab-bar {
@@ -70,7 +91,7 @@
         /* Form elements */
         .form-group { margin-bottom: 16px; }
         label { display: block; font-size: 14px; font-weight: 500; margin-bottom: 6px; color: var(--text-light); }
-        select, input[type="text"], input[type="number"] {
+        select, input[type="text"], input[type="number"], input[type="password"] {
             width: 100%;
             padding: 12px;
             border: 1px solid var(--border);
@@ -222,15 +243,85 @@
             margin: 20px 0 8px;
         }
         .section-title:first-child { margin-top: 0; }
+
+        /* Auth page */
+        .auth-container {
+            max-width: 360px;
+            margin: 40px auto;
+            padding: 0 16px;
+        }
+        .auth-container h2 {
+            text-align: center;
+            margin-bottom: 24px;
+            font-size: 22px;
+        }
+        .auth-toggle {
+            text-align: center;
+            margin-top: 16px;
+            font-size: 14px;
+            color: var(--text-light);
+        }
+        .auth-toggle a {
+            color: var(--primary);
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        /* Shared report banner */
+        .shared-banner {
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            padding: 10px 16px;
+            margin-bottom: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
+        }
+        .shared-banner a {
+            color: var(--primary);
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: 500;
+        }
     </style>
 </head>
 <body>
-    <header>Expense Tracker</header>
+    <header>
+        <span>Expense Tracker</span>
+        <div class="header-right" id="header-user" style="display:none;">
+            <span class="username" id="header-username"></span>
+            <button class="logout-btn" onclick="logout()">Logout</button>
+        </div>
+    </header>
 
     <div id="toast" class="toast"></div>
 
+    <!-- Auth Page -->
+    <div id="page-auth" class="page">
+        <div class="auth-container">
+            <h2 id="auth-title">Login</h2>
+            <div class="card">
+                <div class="form-group">
+                    <label for="auth-username">Username</label>
+                    <input type="text" id="auth-username" placeholder="Username" autocapitalize="none" autocorrect="off">
+                </div>
+                <div class="form-group">
+                    <label for="auth-password">Password</label>
+                    <input type="password" id="auth-password" placeholder="Password">
+                </div>
+                <button class="btn" id="auth-btn" onclick="handleAuth()">Login</button>
+            </div>
+            <div class="auth-toggle" id="auth-toggle">
+                Don't have an account? <a onclick="toggleAuthMode()">Register</a>
+            </div>
+        </div>
+    </div>
+
     <!-- Page 1: Add Expense -->
-    <div id="page-add" class="page active">
+    <div id="page-add" class="page">
         <div class="card">
             <div class="form-group">
                 <label for="category">Category</label>
@@ -250,6 +341,11 @@
 
     <!-- Page 2: Report -->
     <div id="page-report" class="page">
+        <div id="shared-banner" class="shared-banner" style="display:none;">
+            <span id="shared-banner-text"></span>
+            <a onclick="backToMyReport()">Back to my report</a>
+        </div>
+
         <div class="month-selector">
             <select id="report-month" onchange="loadReport()"></select>
         </div>
@@ -266,6 +362,14 @@
             <div class="card" id="detail-list"></div>
         </div>
         <div id="report-empty" class="empty-state" style="display:none;">No expenses recorded yet.</div>
+
+        <div class="section-title" style="margin-top:24px;">View Another User's Report</div>
+        <div class="card">
+            <div style="display:flex;gap:8px;">
+                <input type="text" id="shared-username" placeholder="Enter username" style="flex:1;" autocapitalize="none" autocorrect="off">
+                <button class="btn btn-sm" onclick="loadSharedReport()">View</button>
+            </div>
+        </div>
     </div>
 
     <!-- Page 3: Categories -->
@@ -293,7 +397,7 @@
     </div>
 
     <!-- Tab Bar -->
-    <nav class="tab-bar">
+    <nav class="tab-bar" id="tab-bar" style="display:none;">
         <button class="active" onclick="switchTab('add', this)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>
             Add
@@ -309,6 +413,12 @@
     </nav>
 
     <script>
+    // --- Auth State ---
+    let authToken = localStorage.getItem('token');
+    let currentUser = localStorage.getItem('username');
+    let isRegisterMode = false;
+    let viewingSharedUser = null;
+
     // --- Helpers ---
     function formatIDR(n) {
         return 'Rp ' + Number(n).toLocaleString('id-ID');
@@ -322,11 +432,86 @@
         setTimeout(() => t.classList.remove('show'), 2000);
     }
 
-    async function api(url, opts) {
+    async function api(url, opts = {}) {
+        if (authToken) {
+            opts.headers = opts.headers || {};
+            opts.headers['Authorization'] = 'Bearer ' + authToken;
+        }
         const res = await fetch(url, opts);
+        if (res.status === 401) {
+            logout();
+            throw new Error('Session expired, please login again');
+        }
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Error');
         return data;
+    }
+
+    // --- Auth ---
+    function toggleAuthMode() {
+        isRegisterMode = !isRegisterMode;
+        document.getElementById('auth-title').textContent = isRegisterMode ? 'Register' : 'Login';
+        document.getElementById('auth-btn').textContent = isRegisterMode ? 'Register' : 'Login';
+        document.getElementById('auth-toggle').innerHTML = isRegisterMode
+            ? 'Already have an account? <a onclick="toggleAuthMode()">Login</a>'
+            : 'Don\'t have an account? <a onclick="toggleAuthMode()">Register</a>';
+    }
+
+    async function handleAuth() {
+        const username = document.getElementById('auth-username').value.trim();
+        const password = document.getElementById('auth-password').value;
+        if (!username || !password) {
+            showToast('Please fill in all fields', true);
+            return;
+        }
+        const endpoint = isRegisterMode ? '/api/register' : '/api/login';
+        try {
+            const data = await fetch(endpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username, password}),
+            });
+            const result = await data.json();
+            if (!data.ok) throw new Error(result.detail || 'Error');
+            authToken = result.token;
+            currentUser = result.username;
+            localStorage.setItem('token', authToken);
+            localStorage.setItem('username', currentUser);
+            document.getElementById('auth-username').value = '';
+            document.getElementById('auth-password').value = '';
+            showApp();
+            showToast(isRegisterMode ? 'Account created!' : 'Welcome back!');
+        } catch (e) {
+            showToast(e.message, true);
+        }
+    }
+
+    function logout() {
+        authToken = null;
+        currentUser = null;
+        localStorage.removeItem('token');
+        localStorage.removeItem('username');
+        showAuthPage();
+    }
+
+    function showAuthPage() {
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        document.getElementById('page-auth').classList.add('active');
+        document.getElementById('tab-bar').style.display = 'none';
+        document.getElementById('header-user').style.display = 'none';
+    }
+
+    function showApp() {
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        document.getElementById('page-add').classList.add('active');
+        document.getElementById('tab-bar').style.display = 'flex';
+        document.getElementById('header-user').style.display = 'flex';
+        document.getElementById('header-username').textContent = currentUser;
+        // Reset tab bar active state
+        document.querySelectorAll('.tab-bar button').forEach((b, i) => {
+            b.classList.toggle('active', i === 0);
+        });
+        loadCategoryDropdown();
     }
 
     // --- Tab switching ---
@@ -455,71 +640,116 @@
     async function loadReport() {
         const monthSel = document.getElementById('report-month');
         const selectedMonth = monthSel.value;
+
+        // If viewing a shared report, use the shared endpoint
+        if (viewingSharedUser) {
+            return loadSharedReportData(viewingSharedUser, selectedMonth);
+        }
+
         const url = selectedMonth ? `/api/report?month=${selectedMonth}` : '/api/report';
 
         try {
             const data = await api(url);
-
-            // Populate month dropdown
-            if (data.available_months.length > 0) {
-                const current = data.month;
-                const months = data.available_months;
-                if (!months.includes(current)) months.unshift(current);
-                monthSel.innerHTML = months.map(m =>
-                    `<option value="${m}" ${m === data.month ? 'selected' : ''}>${formatMonth(m)}</option>`
-                ).join('');
-            } else {
-                const now = new Date();
-                const m = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
-                monthSel.innerHTML = `<option value="${m}">${formatMonth(m)}</option>`;
-            }
-
-            if (data.summary.length === 0) {
-                document.getElementById('report-content').style.display = 'none';
-                document.getElementById('report-empty').style.display = 'block';
-                return;
-            }
-            document.getElementById('report-content').style.display = 'block';
-            document.getElementById('report-empty').style.display = 'none';
-
-            // Summary table
-            const summaryHTML = data.summary.map(s => `
-                <div class="summary-row">
-                    <span>${s.category}</span>
-                    <span>${formatIDR(s.total)}</span>
-                </div>
-            `).join('') + `
-                <div class="summary-row total">
-                    <span>Total</span>
-                    <span>${formatIDR(data.grand_total)}</span>
-                </div>
-            `;
-            document.getElementById('summary-list').innerHTML = summaryHTML;
-
-            // Detail list
-            const detailHTML = data.details.length > 0 ? data.details.map(d => `
-                <div class="detail-item">
-                    <div class="info">
-                        <div class="cat">${d.category}${d.description ? ' — ' + d.description : ''}</div>
-                        <div class="date">${d.date}</div>
-                    </div>
-                    <div class="amount">${formatIDR(d.amount)}</div>
-                    <button class="del-btn" onclick="deleteExpense(${d.id})">&times;</button>
-                </div>
-            `).join('') : '<div class="empty-state">No details</div>';
-            document.getElementById('detail-list').innerHTML = detailHTML;
-
-            // Pie chart
-            drawPieChart(data.summary);
+            renderReport(data, false);
         } catch (e) {
             showToast('Failed to load report', true);
         }
+    }
+
+    function renderReport(data, isShared) {
+        const monthSel = document.getElementById('report-month');
+
+        // Populate month dropdown
+        if (data.available_months.length > 0) {
+            const current = data.month;
+            const months = data.available_months;
+            if (!months.includes(current)) months.unshift(current);
+            monthSel.innerHTML = months.map(m =>
+                `<option value="${m}" ${m === data.month ? 'selected' : ''}>${formatMonth(m)}</option>`
+            ).join('');
+        } else {
+            const now = new Date();
+            const m = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+            monthSel.innerHTML = `<option value="${m}">${formatMonth(m)}</option>`;
+        }
+
+        if (data.summary.length === 0) {
+            document.getElementById('report-content').style.display = 'none';
+            document.getElementById('report-empty').style.display = 'block';
+            return;
+        }
+        document.getElementById('report-content').style.display = 'block';
+        document.getElementById('report-empty').style.display = 'none';
+
+        // Summary table
+        const summaryHTML = data.summary.map(s => `
+            <div class="summary-row">
+                <span>${s.category}</span>
+                <span>${formatIDR(s.total)}</span>
+            </div>
+        `).join('') + `
+            <div class="summary-row total">
+                <span>Total</span>
+                <span>${formatIDR(data.grand_total)}</span>
+            </div>
+        `;
+        document.getElementById('summary-list').innerHTML = summaryHTML;
+
+        // Detail list - hide delete buttons for shared reports
+        const detailHTML = data.details.length > 0 ? data.details.map(d => `
+            <div class="detail-item">
+                <div class="info">
+                    <div class="cat">${d.category}${d.description ? ' — ' + d.description : ''}</div>
+                    <div class="date">${d.date}</div>
+                </div>
+                <div class="amount">${formatIDR(d.amount)}</div>
+                ${isShared ? '' : `<button class="del-btn" onclick="deleteExpense(${d.id})">&times;</button>`}
+            </div>
+        `).join('') : '<div class="empty-state">No details</div>';
+        document.getElementById('detail-list').innerHTML = detailHTML;
+
+        // Pie chart
+        drawPieChart(data.summary);
     }
 
     function formatMonth(m) {
         const [y, mo] = m.split('-');
         const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
         return names[parseInt(mo)-1] + ' ' + y;
+    }
+
+    // --- Shared Reports ---
+    async function loadSharedReport() {
+        const username = document.getElementById('shared-username').value.trim();
+        if (!username) {
+            showToast('Enter a username', true);
+            return;
+        }
+        viewingSharedUser = username;
+        document.getElementById('shared-banner').style.display = 'flex';
+        document.getElementById('shared-banner-text').textContent = `Viewing ${username}'s report`;
+        const monthSel = document.getElementById('report-month');
+        await loadSharedReportData(username, monthSel.value);
+    }
+
+    async function loadSharedReportData(username, month) {
+        const url = month
+            ? `/api/report/shared?username=${encodeURIComponent(username)}&month=${month}`
+            : `/api/report/shared?username=${encodeURIComponent(username)}`;
+        try {
+            const data = await api(url);
+            renderReport(data, true);
+        } catch (e) {
+            showToast(e.message, true);
+            backToMyReport();
+        }
+    }
+
+    function backToMyReport() {
+        viewingSharedUser = null;
+        document.getElementById('shared-banner').style.display = 'none';
+        document.getElementById('shared-username').value = '';
+        loadReport();
     }
 
     // Simple pie chart using canvas (no external libs)
@@ -589,8 +819,17 @@
         this.value = raw ? Number(raw).toLocaleString('id-ID') : '';
     });
 
+    // --- Allow Enter key to submit auth form ---
+    document.getElementById('auth-password').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') handleAuth();
+    });
+
     // --- Init ---
-    loadCategoryDropdown();
+    if (authToken) {
+        showApp();
+    } else {
+        showAuthPage();
+    }
     </script>
 </body>
 </html>
