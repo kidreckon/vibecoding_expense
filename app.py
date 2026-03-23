@@ -1,15 +1,15 @@
-import sqlite3
 import os
 from datetime import date, datetime
-from contextlib import contextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = FastAPI()
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "expenses.db")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 DEFAULT_CATEGORIES = [
     "Food", "Transport", "Shopping", "Bills",
@@ -18,32 +18,32 @@ DEFAULT_CATEGORIES = [
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    conn = psycopg2.connect(DATABASE_URL)
     return conn
 
 
 def init_db():
     conn = get_db()
-    conn.executescript("""
+    cur = conn.cursor()
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL UNIQUE
         );
+    """)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS expenses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            category_id INTEGER NOT NULL,
+            id SERIAL PRIMARY KEY,
+            category_id INTEGER NOT NULL REFERENCES categories(id),
             amount INTEGER NOT NULL,
             date TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            FOREIGN KEY (category_id) REFERENCES categories(id)
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
         );
     """)
     for cat in DEFAULT_CATEGORIES:
-        conn.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (cat,))
+        cur.execute("INSERT INTO categories (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (cat,))
     conn.commit()
+    cur.close()
     conn.close()
 
 
@@ -69,21 +69,28 @@ class CategoryUpdate(BaseModel):
 @app.get("/api/categories")
 def list_categories():
     conn = get_db()
-    rows = conn.execute("SELECT id, name FROM categories ORDER BY name").fetchall()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT id, name FROM categories ORDER BY name")
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
-    return [dict(r) for r in rows]
+    return rows
 
 
 @app.post("/api/categories", status_code=201)
 def create_category(cat: CategoryIn):
     conn = get_db()
+    cur = conn.cursor()
     try:
-        cur = conn.execute("INSERT INTO categories (name) VALUES (?)", (cat.name.strip(),))
+        cur.execute("INSERT INTO categories (name) VALUES (%s) RETURNING id", (cat.name.strip(),))
+        cat_id = cur.fetchone()[0]
         conn.commit()
-        cat_id = cur.lastrowid
-    except sqlite3.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        cur.close()
         conn.close()
         raise HTTPException(400, "Category already exists")
+    cur.close()
     conn.close()
     return {"id": cat_id, "name": cat.name.strip()}
 
@@ -91,15 +98,20 @@ def create_category(cat: CategoryIn):
 @app.put("/api/categories/{cat_id}")
 def update_category(cat_id: int, cat: CategoryUpdate):
     conn = get_db()
+    cur = conn.cursor()
     try:
-        cur = conn.execute("UPDATE categories SET name = ? WHERE id = ?", (cat.name.strip(), cat_id))
+        cur.execute("UPDATE categories SET name = %s WHERE id = %s", (cat.name.strip(), cat_id))
         conn.commit()
         if cur.rowcount == 0:
+            cur.close()
             conn.close()
             raise HTTPException(404, "Category not found")
-    except sqlite3.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        cur.close()
         conn.close()
         raise HTTPException(400, "Category name already exists")
+    cur.close()
     conn.close()
     return {"id": cat_id, "name": cat.name.strip()}
 
@@ -107,16 +119,20 @@ def update_category(cat_id: int, cat: CategoryUpdate):
 @app.delete("/api/categories/{cat_id}")
 def delete_category(cat_id: int):
     conn = get_db()
-    # Check if expenses use this category
-    count = conn.execute("SELECT COUNT(*) FROM expenses WHERE category_id = ?", (cat_id,)).fetchone()[0]
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM expenses WHERE category_id = %s", (cat_id,))
+    count = cur.fetchone()[0]
     if count > 0:
+        cur.close()
         conn.close()
         raise HTTPException(400, f"Cannot delete: {count} expense(s) use this category")
-    cur = conn.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+    cur.execute("DELETE FROM categories WHERE id = %s", (cat_id,))
     conn.commit()
     if cur.rowcount == 0:
+        cur.close()
         conn.close()
         raise HTTPException(404, "Category not found")
+    cur.close()
     conn.close()
     return {"ok": True}
 
@@ -126,13 +142,15 @@ def delete_category(cat_id: int):
 @app.post("/api/expenses", status_code=201)
 def create_expense(exp: ExpenseIn):
     conn = get_db()
+    cur = conn.cursor()
     today = date.today().isoformat()
-    cur = conn.execute(
-        "INSERT INTO expenses (category_id, amount, date) VALUES (?, ?, ?)",
+    cur.execute(
+        "INSERT INTO expenses (category_id, amount, date) VALUES (%s, %s, %s) RETURNING id",
         (exp.category_id, exp.amount, today),
     )
+    exp_id = cur.fetchone()[0]
     conn.commit()
-    exp_id = cur.lastrowid
+    cur.close()
     conn.close()
     return {"id": exp_id, "category_id": exp.category_id, "amount": exp.amount, "date": today}
 
@@ -140,11 +158,14 @@ def create_expense(exp: ExpenseIn):
 @app.delete("/api/expenses/{exp_id}")
 def delete_expense(exp_id: int):
     conn = get_db()
-    cur = conn.execute("DELETE FROM expenses WHERE id = ?", (exp_id,))
+    cur = conn.cursor()
+    cur.execute("DELETE FROM expenses WHERE id = %s", (exp_id,))
     conn.commit()
     if cur.rowcount == 0:
+        cur.close()
         conn.close()
         raise HTTPException(404, "Expense not found")
+    cur.close()
     conn.close()
     return {"ok": True}
 
@@ -157,38 +178,43 @@ def get_report(month: str | None = None):
     if month is None:
         month = date.today().strftime("%Y-%m")
     conn = get_db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
     # Summary per category
-    summary = conn.execute("""
+    cur.execute("""
         SELECT c.name as category, COALESCE(SUM(e.amount), 0) as total
         FROM categories c
-        LEFT JOIN expenses e ON e.category_id = c.id AND e.date LIKE ?
+        LEFT JOIN expenses e ON e.category_id = c.id AND e.date LIKE %s
         GROUP BY c.id, c.name
-        HAVING total > 0
+        HAVING COALESCE(SUM(e.amount), 0) > 0
         ORDER BY total DESC
-    """, (month + "%",)).fetchall()
+    """, (month + "%",))
+    summary = cur.fetchall()
 
     # Detail list
-    details = conn.execute("""
+    cur.execute("""
         SELECT e.id, c.name as category, e.amount, e.date
         FROM expenses e
         JOIN categories c ON c.id = e.category_id
-        WHERE e.date LIKE ?
+        WHERE e.date LIKE %s
         ORDER BY e.date DESC, e.id DESC
-    """, (month + "%",)).fetchall()
+    """, (month + "%",))
+    details = cur.fetchall()
 
     # Available months
-    months = conn.execute("""
+    cur.execute("""
         SELECT DISTINCT substr(date, 1, 7) as month FROM expenses ORDER BY month DESC
-    """).fetchall()
+    """)
+    months = cur.fetchall()
 
+    cur.close()
     conn.close()
 
     grand_total = sum(r["total"] for r in summary)
     return {
         "month": month,
-        "summary": [dict(r) for r in summary],
-        "details": [dict(r) for r in details],
+        "summary": summary,
+        "details": details,
         "grand_total": grand_total,
         "available_months": [r["month"] for r in months],
     }
