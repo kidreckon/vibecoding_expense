@@ -442,7 +442,12 @@
             logout();
             throw new Error('Session expired, please login again');
         }
-        const data = await res.json();
+        let data;
+        try {
+            data = await res.json();
+        } catch {
+            throw new Error('Server error, please try again');
+        }
         if (!res.ok) throw new Error(data.detail || 'Error');
         return data;
     }
@@ -466,13 +471,18 @@
         }
         const endpoint = isRegisterMode ? '/api/register' : '/api/login';
         try {
-            const data = await fetch(endpoint, {
+            const resp = await fetch(endpoint, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({username, password}),
             });
-            const result = await data.json();
-            if (!data.ok) throw new Error(result.detail || 'Error');
+            let result;
+            try {
+                result = await resp.json();
+            } catch {
+                throw new Error('Server error, please try again');
+            }
+            if (!resp.ok) throw new Error(result.detail || 'Error');
             authToken = result.token;
             currentUser = result.username;
             localStorage.setItem('token', authToken);
