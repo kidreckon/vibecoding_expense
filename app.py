@@ -22,7 +22,11 @@ DEFAULT_CATEGORIES = [
 
 
 def get_db():
-    conn = psycopg.connect(DATABASE_URL)
+    conninfo = DATABASE_URL
+    if conninfo and "sslmode" not in conninfo:
+        sep = "&" if "?" in conninfo else "?"
+        conninfo += sep + "sslmode=require"
+    conn = psycopg.connect(conninfo)
     return conn
 
 
