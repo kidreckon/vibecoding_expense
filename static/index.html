@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Expense Tracker</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --bg: #f1f5f9;
+            --card: #ffffff;
+            --text: #1e293b;
+            --text-light: #64748b;
+            --border: #e2e8f0;
+            --success: #16a34a;
+            --danger: #dc2626;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding-bottom: 70px;
+        }
+        header {
+            background: var(--primary);
+            color: white;
+            padding: 16px 20px;
+            font-size: 18px;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        /* Tab bar */
+        .tab-bar {
+            display: flex;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--card);
+            border-top: 1px solid var(--border);
+            z-index: 10;
+        }
+        .tab-bar button {
+            flex: 1;
+            padding: 10px 0 8px;
+            border: none;
+            background: none;
+            font-size: 11px;
+            color: var(--text-light);
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+        .tab-bar button.active { color: var(--primary); }
+        .tab-bar button svg { width: 24px; height: 24px; }
+
+        /* Pages */
+        .page { display: none; padding: 16px; }
+        .page.active { display: block; }
+
+        /* Form elements */
+        .form-group { margin-bottom: 16px; }
+        label { display: block; font-size: 14px; font-weight: 500; margin-bottom: 6px; color: var(--text-light); }
+        select, input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 16px;
+            background: var(--card);
+            color: var(--text);
+            -webkit-appearance: none;
+        }
+        select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 36px; }
+        input:focus, select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            color: white;
+            background: var(--primary);
+        }
+        .btn:active { background: var(--primary-dark); }
+        .btn-danger { background: var(--danger); }
+        .btn-sm { width: auto; padding: 8px 16px; font-size: 14px; }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--success);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 100;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+        .toast.show { opacity: 1; }
+
+        /* Card */
+        .card {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+
+        /* Report styles */
+        .month-selector {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .month-selector select { flex: 1; }
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 15px;
+        }
+        .summary-row:last-child { border-bottom: none; }
+        .summary-row.total { font-weight: 700; font-size: 16px; border-top: 2px solid var(--text); margin-top: 4px; padding-top: 12px; }
+        .chart-container { position: relative; width: 100%; max-width: 280px; margin: 0 auto 16px; }
+        .chart-container canvas { width: 100% !important; height: auto !important; }
+
+        /* Detail list */
+        .detail-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 14px;
+        }
+        .detail-item:last-child { border-bottom: none; }
+        .detail-item .info { flex: 1; }
+        .detail-item .cat { font-weight: 500; }
+        .detail-item .date { color: var(--text-light); font-size: 12px; }
+        .detail-item .amount { font-weight: 600; white-space: nowrap; margin-left: 12px; }
+        .detail-item .del-btn {
+            background: none; border: none; color: var(--danger); font-size: 18px;
+            cursor: pointer; padding: 4px 8px; margin-left: 8px;
+        }
+
+        /* Category list */
+        .cat-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .cat-item:last-child { border-bottom: none; }
+        .cat-item .cat-name { font-size: 15px; font-weight: 500; flex: 1; }
+        .cat-item button {
+            background: none; border: 1px solid var(--border); border-radius: 6px;
+            padding: 6px 12px; font-size: 13px; cursor: pointer; margin-left: 8px;
+        }
+        .cat-item .edit-btn { color: var(--primary); }
+        .cat-item .del-btn { color: var(--danger); border-color: var(--danger); }
+
+        .empty-state {
+            text-align: center;
+            color: var(--text-light);
+            padding: 40px 20px;
+            font-size: 15px;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.4);
+            z-index: 50;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.show { display: flex; }
+        .modal {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 24px;
+            margin: 20px;
+            width: 100%;
+            max-width: 360px;
+        }
+        .modal h3 { margin-bottom: 16px; }
+        .modal-actions { display: flex; gap: 12px; margin-top: 16px; }
+        .modal-actions button { flex: 1; }
+        .btn-secondary { background: var(--border); color: var(--text); }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-light);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 20px 0 8px;
+        }
+        .section-title:first-child { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <header>Expense Tracker</header>
+
+    <div id="toast" class="toast"></div>
+
+    <!-- Page 1: Add Expense -->
+    <div id="page-add" class="page active">
+        <div class="card">
+            <div class="form-group">
+                <label for="category">Category</label>
+                <select id="category"></select>
+            </div>
+            <div class="form-group">
+                <label for="amount">Amount (IDR)</label>
+                <input type="number" id="amount" placeholder="0" inputmode="numeric" min="0">
+            </div>
+            <button class="btn" onclick="submitExpense()">Save Expense</button>
+        </div>
+    </div>
+
+    <!-- Page 2: Report -->
+    <div id="page-report" class="page">
+        <div class="month-selector">
+            <select id="report-month" onchange="loadReport()"></select>
+        </div>
+
+        <div id="report-content">
+            <div class="chart-container">
+                <canvas id="pieChart"></canvas>
+            </div>
+
+            <div class="section-title">Summary</div>
+            <div class="card" id="summary-list"></div>
+
+            <div class="section-title">Details</div>
+            <div class="card" id="detail-list"></div>
+        </div>
+        <div id="report-empty" class="empty-state" style="display:none;">No expenses recorded yet.</div>
+    </div>
+
+    <!-- Page 3: Categories -->
+    <div id="page-categories" class="page">
+        <div class="card">
+            <div style="display:flex;gap:8px;margin-bottom:16px;">
+                <input type="text" id="new-cat-name" placeholder="New category name" style="flex:1;">
+                <button class="btn btn-sm" onclick="addCategory()">Add</button>
+            </div>
+            <div id="cat-list"></div>
+        </div>
+    </div>
+
+    <!-- Edit Category Modal -->
+    <div id="edit-modal" class="modal-overlay">
+        <div class="modal">
+            <h3>Edit Category</h3>
+            <input type="text" id="edit-cat-name" placeholder="Category name">
+            <input type="hidden" id="edit-cat-id">
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn" onclick="saveCategory()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab Bar -->
+    <nav class="tab-bar">
+        <button class="active" onclick="switchTab('add', this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>
+            Add
+        </button>
+        <button onclick="switchTab('report', this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 16l4-4 4 4 5-5"/></svg>
+            Report
+        </button>
+        <button onclick="switchTab('categories', this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+            Categories
+        </button>
+    </nav>
+
+    <script>
+    // --- Helpers ---
+    function formatIDR(n) {
+        return 'Rp ' + Number(n).toLocaleString('id-ID');
+    }
+
+    function showToast(msg, isError) {
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.style.background = isError ? 'var(--danger)' : 'var(--success)';
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2000);
+    }
+
+    async function api(url, opts) {
+        const res = await fetch(url, opts);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Error');
+        return data;
+    }
+
+    // --- Tab switching ---
+    function switchTab(name, btn) {
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        document.getElementById('page-' + name).classList.add('active');
+        document.querySelectorAll('.tab-bar button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        if (name === 'report') loadReport();
+        if (name === 'categories') loadCategories();
+    }
+
+    // --- Categories ---
+    let categories = [];
+
+    async function loadCategoryDropdown() {
+        categories = await api('/api/categories');
+        const sel = document.getElementById('category');
+        sel.innerHTML = categories.map(c =>
+            `<option value="${c.id}">${c.name}</option>`
+        ).join('');
+    }
+
+    async function loadCategories() {
+        categories = await api('/api/categories');
+        const list = document.getElementById('cat-list');
+        if (categories.length === 0) {
+            list.innerHTML = '<div class="empty-state">No categories yet.</div>';
+            return;
+        }
+        list.innerHTML = categories.map(c => `
+            <div class="cat-item">
+                <span class="cat-name">${c.name}</span>
+                <button class="edit-btn" onclick="openEditModal(${c.id}, '${c.name.replace(/'/g, "\\'")}')">Edit</button>
+                <button class="del-btn" onclick="deleteCategory(${c.id})">Delete</button>
+            </div>
+        `).join('');
+    }
+
+    async function addCategory() {
+        const input = document.getElementById('new-cat-name');
+        const name = input.value.trim();
+        if (!name) return;
+        try {
+            await api('/api/categories', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name}),
+            });
+            input.value = '';
+            showToast('Category added');
+            loadCategories();
+            loadCategoryDropdown();
+        } catch (e) {
+            showToast(e.message, true);
+        }
+    }
+
+    function openEditModal(id, name) {
+        document.getElementById('edit-cat-id').value = id;
+        document.getElementById('edit-cat-name').value = name;
+        document.getElementById('edit-modal').classList.add('show');
+    }
+
+    function closeModal() {
+        document.getElementById('edit-modal').classList.remove('show');
+    }
+
+    async function saveCategory() {
+        const id = document.getElementById('edit-cat-id').value;
+        const name = document.getElementById('edit-cat-name').value.trim();
+        if (!name) return;
+        try {
+            await api(`/api/categories/${id}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name}),
+            });
+            closeModal();
+            showToast('Category updated');
+            loadCategories();
+            loadCategoryDropdown();
+        } catch (e) {
+            showToast(e.message, true);
+        }
+    }
+
+    async function deleteCategory(id) {
+        if (!confirm('Delete this category?')) return;
+        try {
+            await api(`/api/categories/${id}`, {method: 'DELETE'});
+            showToast('Category deleted');
+            loadCategories();
+            loadCategoryDropdown();
+        } catch (e) {
+            showToast(e.message, true);
+        }
+    }
+
+    // --- Add Expense ---
+    async function submitExpense() {
+        const category_id = Number(document.getElementById('category').value);
+        const amount = Number(document.getElementById('amount').value);
+        if (!category_id || !amount || amount <= 0) {
+            showToast('Please fill in all fields', true);
+            return;
+        }
+        try {
+            await api('/api/expenses', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({category_id, amount}),
+            });
+            document.getElementById('amount').value = '';
+            showToast('Expense saved!');
+        } catch (e) {
+            showToast(e.message, true);
+        }
+    }
+
+    // --- Report ---
+    let pieChart = null;
+
+    async function loadReport() {
+        const monthSel = document.getElementById('report-month');
+        const selectedMonth = monthSel.value;
+        const url = selectedMonth ? `/api/report?month=${selectedMonth}` : '/api/report';
+
+        try {
+            const data = await api(url);
+
+            // Populate month dropdown
+            if (data.available_months.length > 0) {
+                const current = data.month;
+                const months = data.available_months;
+                if (!months.includes(current)) months.unshift(current);
+                monthSel.innerHTML = months.map(m =>
+                    `<option value="${m}" ${m === data.month ? 'selected' : ''}>${formatMonth(m)}</option>`
+                ).join('');
+            } else {
+                const now = new Date();
+                const m = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+                monthSel.innerHTML = `<option value="${m}">${formatMonth(m)}</option>`;
+            }
+
+            if (data.summary.length === 0) {
+                document.getElementById('report-content').style.display = 'none';
+                document.getElementById('report-empty').style.display = 'block';
+                return;
+            }
+            document.getElementById('report-content').style.display = 'block';
+            document.getElementById('report-empty').style.display = 'none';
+
+            // Summary table
+            const summaryHTML = data.summary.map(s => `
+                <div class="summary-row">
+                    <span>${s.category}</span>
+                    <span>${formatIDR(s.total)}</span>
+                </div>
+            `).join('') + `
+                <div class="summary-row total">
+                    <span>Total</span>
+                    <span>${formatIDR(data.grand_total)}</span>
+                </div>
+            `;
+            document.getElementById('summary-list').innerHTML = summaryHTML;
+
+            // Detail list
+            const detailHTML = data.details.length > 0 ? data.details.map(d => `
+                <div class="detail-item">
+                    <div class="info">
+                        <div class="cat">${d.category}</div>
+                        <div class="date">${d.date}</div>
+                    </div>
+                    <div class="amount">${formatIDR(d.amount)}</div>
+                    <button class="del-btn" onclick="deleteExpense(${d.id})">&times;</button>
+                </div>
+            `).join('') : '<div class="empty-state">No details</div>';
+            document.getElementById('detail-list').innerHTML = detailHTML;
+
+            // Pie chart
+            drawPieChart(data.summary);
+        } catch (e) {
+            showToast('Failed to load report', true);
+        }
+    }
+
+    function formatMonth(m) {
+        const [y, mo] = m.split('-');
+        const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return names[parseInt(mo)-1] + ' ' + y;
+    }
+
+    // Simple pie chart using canvas (no external libs)
+    const COLORS = ['#2563eb','#16a34a','#eab308','#dc2626','#8b5cf6','#ec4899','#f97316','#06b6d4','#84cc16','#6366f1'];
+
+    function drawPieChart(summary) {
+        const canvas = document.getElementById('pieChart');
+        const ctx = canvas.getContext('2d');
+        const dpr = window.devicePixelRatio || 1;
+        const size = 280;
+        canvas.width = size * dpr;
+        canvas.height = size * dpr;
+        canvas.style.width = size + 'px';
+        canvas.style.height = size + 'px';
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, size, size);
+
+        const total = summary.reduce((s, r) => s + r.total, 0);
+        if (total === 0) return;
+
+        const cx = size / 2, cy = size / 2, r = size / 2 - 10;
+        let startAngle = -Math.PI / 2;
+
+        summary.forEach((item, i) => {
+            const sliceAngle = (item.total / total) * 2 * Math.PI;
+            const endAngle = startAngle + sliceAngle;
+
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, r, startAngle, endAngle);
+            ctx.closePath();
+            ctx.fillStyle = COLORS[i % COLORS.length];
+            ctx.fill();
+
+            // Label
+            if (sliceAngle > 0.2) {
+                const midAngle = startAngle + sliceAngle / 2;
+                const lx = cx + (r * 0.65) * Math.cos(midAngle);
+                const ly = cy + (r * 0.65) * Math.sin(midAngle);
+                ctx.fillStyle = '#fff';
+                ctx.font = '600 12px -apple-system, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(item.category, lx, ly - 7);
+                ctx.font = '11px -apple-system, sans-serif';
+                ctx.fillText(Math.round(item.total / total * 100) + '%', lx, ly + 7);
+            }
+
+            startAngle = endAngle;
+        });
+    }
+
+    async function deleteExpense(id) {
+        if (!confirm('Delete this expense?')) return;
+        try {
+            await api(`/api/expenses/${id}`, {method: 'DELETE'});
+            showToast('Expense deleted');
+            loadReport();
+        } catch (e) {
+            showToast(e.message, true);
+        }
+    }
+
+    // --- Init ---
+    loadCategoryDropdown();
+    </script>
+</body>
+</html>
