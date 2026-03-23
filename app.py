@@ -4,8 +4,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 
 app = FastAPI()
 
@@ -18,7 +18,7 @@ DEFAULT_CATEGORIES = [
 
 
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg.connect(DATABASE_URL)
     return conn
 
 
@@ -69,7 +69,7 @@ class CategoryUpdate(BaseModel):
 @app.get("/api/categories")
 def list_categories():
     conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
     cur.execute("SELECT id, name FROM categories ORDER BY name")
     rows = cur.fetchall()
     cur.close()
@@ -85,7 +85,7 @@ def create_category(cat: CategoryIn):
         cur.execute("INSERT INTO categories (name) VALUES (%s) RETURNING id", (cat.name.strip(),))
         cat_id = cur.fetchone()[0]
         conn.commit()
-    except psycopg2.errors.UniqueViolation:
+    except psycopg.errors.UniqueViolation:
         conn.rollback()
         cur.close()
         conn.close()
@@ -106,7 +106,7 @@ def update_category(cat_id: int, cat: CategoryUpdate):
             cur.close()
             conn.close()
             raise HTTPException(404, "Category not found")
-    except psycopg2.errors.UniqueViolation:
+    except psycopg.errors.UniqueViolation:
         conn.rollback()
         cur.close()
         conn.close()
@@ -178,7 +178,7 @@ def get_report(month: str | None = None):
     if month is None:
         month = date.today().strftime("%Y-%m")
     conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
 
     # Summary per category
     cur.execute("""
