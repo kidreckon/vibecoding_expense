@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import psycopg
 from psycopg.rows import dict_row
-from passlib.hash import bcrypt
+import bcrypt
 import jwt
 
 app = FastAPI()
@@ -81,11 +81,11 @@ except Exception as e:
 # --- Auth Utilities ---
 
 def hash_password(plain: str) -> str:
-    return bcrypt.hash(plain)
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.verify(plain, hashed)
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 def create_token(user_id: int, username: str) -> str:
