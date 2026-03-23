@@ -36,9 +36,14 @@ def init_db():
             id SERIAL PRIMARY KEY,
             category_id INTEGER NOT NULL REFERENCES categories(id),
             amount INTEGER NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
             date TEXT NOT NULL,
             created_at TIMESTAMP NOT NULL DEFAULT NOW()
         );
+    """)
+    # Add description column if it doesn't exist (migration for existing DBs)
+    cur.execute("""
+        ALTER TABLE expenses ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
     """)
     for cat in DEFAULT_CATEGORIES:
         cur.execute("INSERT INTO categories (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (cat,))
@@ -54,6 +59,7 @@ init_db()
 class ExpenseIn(BaseModel):
     category_id: int
     amount: int
+    description: str = ""
 
 
 class CategoryIn(BaseModel):
@@ -145,14 +151,14 @@ def create_expense(exp: ExpenseIn):
     cur = conn.cursor()
     today = date.today().isoformat()
     cur.execute(
-        "INSERT INTO expenses (category_id, amount, date) VALUES (%s, %s, %s) RETURNING id",
-        (exp.category_id, exp.amount, today),
+        "INSERT INTO expenses (category_id, amount, description, date) VALUES (%s, %s, %s, %s) RETURNING id",
+        (exp.category_id, exp.amount, exp.description.strip(), today),
     )
     exp_id = cur.fetchone()[0]
     conn.commit()
     cur.close()
     conn.close()
-    return {"id": exp_id, "category_id": exp.category_id, "amount": exp.amount, "date": today}
+    return {"id": exp_id, "category_id": exp.category_id, "amount": exp.amount, "description": exp.description.strip(), "date": today}
 
 
 @app.delete("/api/expenses/{exp_id}")
@@ -193,7 +199,7 @@ def get_report(month: str | None = None):
 
     # Detail list
     cur.execute("""
-        SELECT e.id, c.name as category, e.amount, e.date
+        SELECT e.id, c.name as category, e.amount, e.description, e.date
         FROM expenses e
         JOIN categories c ON c.id = e.category_id
         WHERE e.date LIKE %s
