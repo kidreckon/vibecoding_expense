@@ -332,8 +332,26 @@
                 <select id="category"></select>
             </div>
             <div class="form-group">
-                <label for="amount">Amount (IDR)</label>
+                <label for="currency">Currency</label>
+                <select id="currency" onchange="onCurrencyChange()">
+                    <option value="IDR">IDR (Rupiah)</option>
+                    <option value="SGD">SGD (Singapore Dollar)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="amount" id="amount-label">Amount (IDR)</label>
                 <input type="text" id="amount" placeholder="0" inputmode="numeric">
+            </div>
+            <div id="sgd-rate-section" style="display:none;">
+                <div class="form-group">
+                    <label>Exchange Rate (1 SGD = ? IDR)</label>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <input type="text" id="exchange-rate" placeholder="Loading..." inputmode="decimal" oninput="updateConvertedAmount()">
+                        <button class="btn btn-sm" onclick="fetchExchangeRate()" type="button" style="width:auto;white-space:nowrap;">Refresh</button>
+                    </div>
+                    <div id="rate-info" style="font-size:12px;color:var(--text-light);margin-top:4px;"></div>
+                </div>
+                <div id="converted-amount" style="font-size:14px;color:var(--text-light);margin-bottom:12px;font-weight:500;"></div>
             </div>
             <div class="form-group">
                 <label for="description">Description</label>
@@ -625,23 +643,126 @@
         }
     }
 
+    // --- Currency & Exchange Rate ---
+    function formatSGD(cents) {
+        return 'S$' + (cents / 100).toFixed(2);
+    }
+
+    async function fetchExchangeRate() {
+        const rateInput = document.getElementById('exchange-rate');
+        const rateInfo = document.getElementById('rate-info');
+        rateInput.value = '';
+        rateInfo.textContent = 'Fetching rate...';
+
+        try {
+            const resp = await fetch('https://api.frankfurter.dev/v1/latest?from=SGD&to=IDR');
+            if (resp.ok) {
+                const data = await resp.json();
+                rateInput.value = data.rates.IDR;
+                rateInfo.textContent = 'Rate from Frankfurter at ' + new Date().toLocaleTimeString();
+                updateConvertedAmount();
+                return;
+            }
+        } catch (e) { /* fall through */ }
+
+        try {
+            const resp = await fetch('https://open.er-api.com/v6/latest/SGD');
+            if (resp.ok) {
+                const data = await resp.json();
+                rateInput.value = data.rates.IDR;
+                rateInfo.textContent = 'Rate from ExchangeRate-API at ' + new Date().toLocaleTimeString();
+                updateConvertedAmount();
+                return;
+            }
+        } catch (e) { /* both failed */ }
+
+        rateInfo.textContent = 'Could not fetch rate. Please enter manually.';
+    }
+
+    function onCurrencyChange() {
+        const currency = document.getElementById('currency').value;
+        const sgdSection = document.getElementById('sgd-rate-section');
+        const amountLabel = document.getElementById('amount-label');
+        const amountInput = document.getElementById('amount');
+
+        if (currency === 'SGD') {
+            sgdSection.style.display = 'block';
+            amountLabel.textContent = 'Amount (SGD)';
+            amountInput.value = '';
+            amountInput.placeholder = '0.00';
+            amountInput.inputMode = 'decimal';
+            fetchExchangeRate();
+        } else {
+            sgdSection.style.display = 'none';
+            amountLabel.textContent = 'Amount (IDR)';
+            amountInput.value = '';
+            amountInput.placeholder = '0';
+            amountInput.inputMode = 'numeric';
+            document.getElementById('converted-amount').textContent = '';
+        }
+    }
+
+    function updateConvertedAmount() {
+        const currency = document.getElementById('currency').value;
+        if (currency !== 'SGD') return;
+        const sgdStr = document.getElementById('amount').value.replace(/[^0-9.]/g, '');
+        const rate = parseFloat(document.getElementById('exchange-rate').value);
+        const el = document.getElementById('converted-amount');
+        if (sgdStr && rate) {
+            const idr = Math.round(parseFloat(sgdStr) * rate);
+            el.textContent = '= ' + formatIDR(idr);
+        } else {
+            el.textContent = '';
+        }
+    }
+
     // --- Add Expense ---
     async function submitExpense() {
         const category_id = Number(document.getElementById('category').value);
-        const amount = Number(document.getElementById('amount').value.replace(/[^0-9]/g, ''));
+        const currency = document.getElementById('currency').value;
         const description = document.getElementById('description').value.trim();
-        if (!category_id || !amount || amount <= 0) {
-            showToast('Please fill in all fields', true);
-            return;
+
+        let payload;
+
+        if (currency === 'SGD') {
+            const sgdStr = document.getElementById('amount').value.replace(/[^0-9.]/g, '');
+            const sgdFloat = parseFloat(sgdStr);
+            const rate = parseFloat(document.getElementById('exchange-rate').value);
+
+            if (!category_id || !sgdFloat || sgdFloat <= 0 || !rate || rate <= 0) {
+                showToast('Please fill in all fields including exchange rate', true);
+                return;
+            }
+
+            payload = {
+                category_id,
+                amount: Math.round(sgdFloat * rate),
+                description,
+                original_currency: 'SGD',
+                original_amount: Math.round(sgdFloat * 100),
+                exchange_rate: rate,
+            };
+        } else {
+            const raw = document.getElementById('amount').value.replace(/[^0-9]/g, '');
+            const amount = Number(raw);
+            if (!category_id || !amount || amount <= 0) {
+                showToast('Please fill in all fields', true);
+                return;
+            }
+            payload = { category_id, amount, description };
         }
+
         try {
             await api('/api/expenses', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({category_id, amount, description}),
+                body: JSON.stringify(payload),
             });
             document.getElementById('amount').value = '';
             document.getElementById('description').value = '';
+            // Reset to IDR
+            document.getElementById('currency').value = 'IDR';
+            onCurrencyChange();
             showToast('Expense saved!');
         } catch (e) {
             showToast(e.message, true);
@@ -710,16 +831,21 @@
         document.getElementById('summary-list').innerHTML = summaryHTML;
 
         // Detail list - hide delete buttons for shared reports
-        const detailHTML = data.details.length > 0 ? data.details.map(d => `
+        const detailHTML = data.details.length > 0 ? data.details.map(d => {
+            let amountDisplay = formatIDR(d.amount);
+            if (d.original_currency === 'SGD' && d.original_amount) {
+                amountDisplay += `<div style="font-size:11px;color:var(--text-light);margin-top:2px;">${formatSGD(d.original_amount)}</div>`;
+            }
+            return `
             <div class="detail-item">
                 <div class="info">
                     <div class="cat">${d.category}${d.description ? ' — ' + d.description : ''}</div>
                     <div class="date">${d.date}</div>
                 </div>
-                <div class="amount">${formatIDR(d.amount)}</div>
+                <div class="amount" style="text-align:right;">${amountDisplay}</div>
                 ${isShared ? '' : `<button class="del-btn" onclick="deleteExpense(${d.id})">&times;</button>`}
-            </div>
-        `).join('') : '<div class="empty-state">No details</div>';
+            </div>`;
+        }).join('') : '<div class="empty-state">No details</div>';
         document.getElementById('detail-list').innerHTML = detailHTML;
 
         // Pie chart
@@ -829,8 +955,18 @@
 
     // --- Amount input formatting ---
     document.getElementById('amount').addEventListener('input', function () {
-        const raw = this.value.replace(/[^0-9]/g, '');
-        this.value = raw ? Number(raw).toLocaleString('id-ID') : '';
+        const currency = document.getElementById('currency').value;
+        if (currency === 'SGD') {
+            // Allow decimals for SGD, strip non-numeric except dot
+            this.value = this.value.replace(/[^0-9.]/g, '');
+            // Prevent multiple dots
+            const parts = this.value.split('.');
+            if (parts.length > 2) this.value = parts[0] + '.' + parts.slice(1).join('');
+            updateConvertedAmount();
+        } else {
+            const raw = this.value.replace(/[^0-9]/g, '');
+            this.value = raw ? Number(raw).toLocaleString('id-ID') : '';
+        }
     });
 
     // --- Allow Enter key to submit auth form ---

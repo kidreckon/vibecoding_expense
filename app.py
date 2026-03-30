@@ -62,6 +62,9 @@ def init_db():
     # Migrations for existing DBs
     cur.execute("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';")
     cur.execute("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id);")
+    cur.execute("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS original_currency TEXT DEFAULT 'IDR';")
+    cur.execute("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS original_amount INTEGER;")
+    cur.execute("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS exchange_rate NUMERIC;")
     for cat in DEFAULT_CATEGORIES:
         cur.execute("INSERT INTO categories (name) VALUES (%s) ON CONFLICT (name) DO NOTHING", (cat,))
     conn.commit()
@@ -117,6 +120,9 @@ class ExpenseIn(BaseModel):
     category_id: int
     amount: int
     description: str = ""
+    original_currency: str = "IDR"
+    original_amount: int | None = None
+    exchange_rate: float | None = None
 
 
 class CategoryIn(BaseModel):
@@ -251,18 +257,31 @@ def delete_category(cat_id: int):
 @app.post("/api/expenses", status_code=201)
 def create_expense(exp: ExpenseIn, request: Request):
     user = get_current_user(request)
+    if exp.original_currency not in ("IDR", "SGD"):
+        raise HTTPException(400, "Currency must be IDR or SGD")
+    if exp.original_currency == "SGD":
+        if not exp.original_amount or not exp.exchange_rate:
+            raise HTTPException(400, "SGD expenses require original_amount and exchange_rate")
+        if exp.exchange_rate <= 0:
+            raise HTTPException(400, "Exchange rate must be positive")
     conn = get_db()
     cur = conn.cursor()
     today = date.today().isoformat()
     cur.execute(
-        "INSERT INTO expenses (category_id, amount, description, date, user_id) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-        (exp.category_id, exp.amount, exp.description.strip(), today, user["id"]),
+        "INSERT INTO expenses (category_id, amount, description, date, user_id, original_currency, original_amount, exchange_rate) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (exp.category_id, exp.amount, exp.description.strip(), today, user["id"],
+         exp.original_currency, exp.original_amount, exp.exchange_rate),
     )
     exp_id = cur.fetchone()[0]
     conn.commit()
     cur.close()
     conn.close()
-    return {"id": exp_id, "category_id": exp.category_id, "amount": exp.amount, "description": exp.description.strip(), "date": today}
+    return {
+        "id": exp_id, "category_id": exp.category_id, "amount": exp.amount,
+        "description": exp.description.strip(), "date": today,
+        "original_currency": exp.original_currency, "original_amount": exp.original_amount,
+        "exchange_rate": exp.exchange_rate,
+    }
 
 
 @app.delete("/api/expenses/{exp_id}")
@@ -299,7 +318,8 @@ def _build_report(user_id: int, month: str):
     summary = cur.fetchall()
 
     cur.execute("""
-        SELECT e.id, c.name as category, e.amount, e.description, e.date
+        SELECT e.id, c.name as category, e.amount, e.description, e.date,
+               e.original_currency, e.original_amount, e.exchange_rate
         FROM expenses e
         JOIN categories c ON c.id = e.category_id
         WHERE e.date LIKE %s AND e.user_id = %s
